@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>만화 ZIP 번역기</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --ink: #1c1c1e;
+    --paper: #f6f3ee;
+    --accent: #b34a3c;
+    --accent-soft: #e8d9cf;
+    --line: #d8d0c4;
+    --mono: 'JetBrains Mono', 'Courier New', monospace;
+    --ok: #4a7a52;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Noto Sans KR', -apple-system, sans-serif;
+    min-height: 100vh;
+    padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    border-bottom: 3px solid var(--ink);
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+  }
+  header h1 { font-size: 21px; margin: 0; letter-spacing: -0.5px; }
+  header .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 2px 8px;
+    border-radius: 20px;
+  }
+  .drop {
+    border: 2px dashed var(--line);
+    border-radius: 12px;
+    padding: 28px 16px;
+    text-align: center;
+    cursor: pointer;
+    background: #fff;
+    transition: border-color .15s, background .15s;
+  }
+  .drop.drag { border-color: var(--accent); background: var(--accent-soft); }
+  .drop .main { font-weight: 600; font-size: 15px; margin: 4px 0; }
+  .drop .sub { font-size: 12px; color: #8a8378; margin: 4px 0; }
+  input[type=file] { display: none; }
+
+  .filerow {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-top: 14px;
+    font-size: 13px;
+  }
+  .filerow .name { font-weight: 600; }
+  .filerow .count { color: #8a8378; font-size: 12px; }
+
+  .controls { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  select, button {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+  }
+  button.primary {
+    background: var(--ink); color: #fff; border-color: var(--ink);
+    cursor: pointer; font-weight: 600;
+  }
+  button.primary:disabled { opacity: .4; cursor: default; }
+  button.primary:not(:disabled):hover { background: var(--accent); border-color: var(--accent); }
+  button.download {
+    background: var(--ok); border-color: var(--ok); color: #fff; cursor: pointer; font-weight: 600;
+    display: none;
+  }
+
+  .progress-wrap { margin-top: 20px; display: none; }
+  .progress-label {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 12px; margin-bottom: 6px; color: var(--accent);
+  }
+  .bar-bg { background: var(--accent-soft); border-radius: 20px; height: 8px; overflow: hidden; }
+  .bar-fill { background: var(--accent); height: 100%; width: 0%; transition: width .25s; }
+  .current-file { font-size: 12px; color: #8a8378; margin-top: 6px; font-family: var(--mono); }
+
+  .grid {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+  .thumb {
+    position: relative;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    background: #fff;
+    aspect-ratio: 3/4;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb .badge {
+    position: absolute; top: 4px; right: 4px;
+    background: var(--ok); color: #fff; font-size: 10px;
+    padding: 2px 6px; border-radius: 20px; font-family: var(--mono);
+  }
+  .thumb .badge.err { background: var(--accent); }
+  .thumb .label {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,.55); color: #fff; font-size: 10px;
+    padding: 3px 6px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .err-box {
+    display:none; margin-top: 14px; background: #fdeceb; border: 1px solid #e3a79f;
+    color: #8c2f24; padding: 12px 14px; border-radius: 8px; font-size: 13px;
+  }
+  footer { margin-top: 30px; font-size: 11px; color: #a39c8e; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>만화 ZIP 번역기</h1>
+    <span class="tag">Netlify</span>
+  </header>
+
+  <label class="drop" id="drop" for="zipInput">
+    <p class="main">ZIP 파일을 드래그하거나 탭해서 업로드</p>
+    <p class="sub">이미지(jpg/png/webp)가 들어있는 .zip — 페이지 순서대로 처리됩니다</p>
+  </label>
+  <input type="file" id="zipInput" accept=".zip">
+
+  <div class="filerow" id="filerow">
+    <span class="name" id="fileName"></span>
+    <span class="count" id="fileCount"></span>
+  </div>
+
+  <div class="controls">
+    <select id="targetLang">
+      <option value="한국어" selected>→ 한국어</option>
+      <option value="영어">→ English</option>
+      <option value="일본어">→ 日本語</option>
+    </select>
+    <button class="primary" id="runBtn" disabled>전체 번역 시작</button>
+    <button class="download" id="downloadBtn">번역본 ZIP 다운로드</button>
+  </div>
+
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-label">
+      <span id="progressPct">0%</span>
+      <span id="progressCount">0 / 0</span>
+    </div>
+    <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
+    <div class="current-file" id="currentFile"></div>
+  </div>
+
+  <div class="err-box" id="errBox"></div>
+
+  <div class="grid" id="grid"></div>
+
+  <footer>이미지는 번역 처리를 위해 서버(Netlify Function)를 거쳐 Grok API로 전송됩니다 · 저작권이 있는 원본은 개인적인 열람 용도로만 사용하세요</footer>
+</div>
+
+<script>
+const drop = document.getElementById('drop');
+const zipInput = document.getElementById('zipInput');
+const filerow = document.getElementById('filerow');
+const fileNameEl = document.getElementById('fileName');
+const fileCountEl = document.getElementById('fileCount');
+const runBtn = document.getElementById('runBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const targetLang = document.getElementById('targetLang');
+const progressWrap = document.getElementById('progressWrap');
+const progressPct = document.getElementById('progressPct');
+const progressCount = document.getElementById('progressCount');
+const barFill = document.getElementById('barFill');
+const currentFileEl = document.getElementById('currentFile');
+const errBox = document.getElementById('errBox');
+const grid = document.getElementById('grid');
+
+let imageEntries = [];
+let outputZip = null;
+let outputZipBlobUrl = null;
+
+const IMAGE_EXT = /\.(jpe?g|png|webp)$/i;
+
+function resetAll() {
+  imageEntries = [];
+  outputZip = null;
+  runBtn.disabled = true;
+  downloadBtn.style.display = 'none';
+  progressWrap.style.display = 'none';
+  errBox.style.display = 'none';
+  grid.innerHTML = '';
+  filerow.style.display = 'none';
+}
+
+async function handleZip(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.zip')) {
+    showError('.zip 파일만 지원합니다.');
+    return;
+  }
+  resetAll();
+  fileNameEl.textContent = file.name;
+  filerow.style.display = 'flex';
+
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const entries = Object.values(zip.files)
+      .filter(f => !f.dir && IMAGE_EXT.test(f.name))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    if (entries.length === 0) {
+      showError('ZIP 안에서 이미지 파일을 찾지 못했습니다.');
+      return;
+    }
+
+    for (const entry of entries) {
+      const blob = await entry.async('blob');
+      const ext = entry.name.split('.').pop().toLowerCase();
+      const mediaType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+      const typedBlob = blob.type ? blob : new Blob([blob], { type: mediaType });
+      const dataUrl = await blobToDataUrl(typedBlob);
+      imageEntries.push({ name: entry.name, blob: typedBlob, dataUrl, mediaType });
+    }
+
+    fileCountEl.textContent = imageEntries.length + '개 이미지';
+    renderGrid();
+    runBtn.disabled = false;
+  } catch (e) {
+    showError('ZIP을 여는 중 오류가 발생했습니다: ' + e.message);
+  }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+function renderGrid() {
+  grid.innerHTML = '';
+  imageEntries.forEach((entry, i) => {
+    const div = document.createElement('div');
+    div.className = 'thumb';
+    div.id = 'thumb-' + i;
+    div.innerHTML = `<img src="${entry.dataUrl}" alt="${entry.name}"><span class="label">${entry.name}</span>`;
+    grid.appendChild(div);
+  });
+}
+
+function setBadge(i, text, isErr) {
+  const thumb = document.getElementById('thumb-' + i);
+  if (!thumb) return;
+  let badge = thumb.querySelector('.badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'badge';
+    thumb.appendChild(badge);
+  }
+  badge.textContent = text;
+  badge.classList.toggle('err', !!isErr);
+}
+
+function showError(msg) {
+  errBox.textContent = msg;
+  errBox.style.display = 'block';
+}
+
+zipInput.addEventListener('change', (e) => handleZip(e.target.files[0]));
+
+['dragenter', 'dragover'].forEach(evt =>
+  drop.addEventListener(evt, (e) => { e.preventDefault(); drop.classList.add('drag'); })
+);
+['dragleave', 'drop'].forEach(evt =>
+  drop.addEventListener(evt, (e) => { e.preventDefault(); drop.classList.remove('drag'); })
+);
+drop.addEventListener('drop', (e) => handleZip(e.dataTransfer.files[0]));
+
+runBtn.addEventListener('click', async () => {
+  runBtn.disabled = true;
+  downloadBtn.style.display = 'none';
+  errBox.style.display = 'none';
+  progressWrap.style.display = 'block';
+
+  const lang = targetLang.value;
+  outputZip = new JSZip();
+  let done = 0;
+  const total = imageEntries.length;
+  updateProgress(done, total, '');
+
+  for (let i = 0; i < imageEntries.length; i++) {
+    const entry = imageEntries[i];
+    currentFileEl.textContent = entry.name + ' 처리 중…';
+    try {
+      const translated = await translateImage(entry, lang);
+      const outBlob = await renderTranslatedImage(entry, translated);
+      outputZip.file(entry.name.replace(IMAGE_EXT, '') + '_ko.png', outBlob);
+      setBadge(i, '✓', false);
+    } catch (e) {
+      setBadge(i, '!', true);
+      outputZip.file(entry.name, entry.blob);
+    }
+    done++;
+    updateProgress(done, total, entry.name);
+  }
+
+  currentFileEl.textContent = '완료';
+  const blob = await outputZip.generateAsync({ type: 'blob' });
+  if (outputZipBlobUrl) URL.revokeObjectURL(outputZipBlobUrl);
+  outputZipBlobUrl = URL.createObjectURL(blob);
+  downloadBtn.style.display = 'inline-block';
+  runBtn.disabled = false;
+});
+
+function updateProgress(done, total, name) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  progressPct.textContent = pct + '%';
+  progressCount.textContent = done + ' / ' + total;
+  barFill.style.width = pct + '%';
+}
+
+downloadBtn.addEventListener('click', () => {
+  if (!outputZipBlobUrl) return;
+  const a = document.createElement('a');
+  a.href = outputZipBlobUrl;
+  a.download = 'translated.zip';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
+
+async function translateImage(entry, lang) {
+  const base64Data = entry.dataUrl.split(',')[1];
+
+  const response = await fetch('/.netlify/functions/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      base64Data,
+      mediaType: entry.mediaType,
+      targetLang: lang
+    })
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error('서버 오류 ' + response.status + ': ' + errBody);
+  }
+  return await response.json();
+}
+
+function renderTranslatedImage(entry, translated) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      const bubbles = translated.bubbles || [];
+      bubbles.forEach(b => {
+        if (!b.bbox || b.bbox.length !== 4) return;
+        const [bx, by, bw, bh] = b.bbox;
+        const x = bx * canvas.width;
+        const y = by * canvas.height;
+        const w = bw * canvas.width;
+        const h = bh * canvas.height;
+        if (w <= 0 || h <= 0) return;
+
+        ctx.fillStyle = '#ffffff';
+        roundRect(ctx, x, y, w, h, Math.min(w, h) * 0.15);
+        ctx.fill();
+
+        drawWrappedText(ctx, b.translation || '', x + w * 0.06, y + h * 0.06, w * 0.88, h * 0.88);
+      });
+
+      canvas.toBlob(blob => {
+        if (blob) resolve(blob); else reject(new Error('캔버스 변환 실패'));
+      }, 'image/png');
+    };
+    img.onerror = reject;
+    img.src = entry.dataUrl;
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawWrappedText(ctx, text, x, y, maxWidth, maxHeight) {
+  if (!text) return;
+  ctx.fillStyle = '#111111';
+  ctx.textBaseline = 'top';
+
+  let fontSize = Math.max(10, Math.floor(maxHeight / 3));
+  let lines = [];
+
+  for (; fontSize >= 8; fontSize -= 1) {
+    ctx.font = `${fontSize}px sans-serif`;
+    lines = wrapText(ctx, text, maxWidth);
+    const totalHeight = lines.length * fontSize * 1.25;
+    if (totalHeight <= maxHeight) break;
+  }
+
+  ctx.font = `${fontSize}px sans-serif`;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, x, y + i * fontSize * 1.25);
+  });
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = '';
+  words.forEach(word => {
+    const test = current ? current + ' ' + word : word;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+</script>
+</body>
+</html>
